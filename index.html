@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Zeitungsverteilung</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="shortcut icon" href="media/favicon180.png"/>
+  <link rel="apple-touch-icon" href="media/favicon180.png"/>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+    .open { background: #ffe8a3; }
+    .done { background: #b7f7c7; }
+    .btn { padding: 6px 10px; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; background: white; }
+    #info {position: absolute; left: 64px; bottom: 10px; width: auto; height: auto; background: #ffffff; z-index: 999; border-radius: 8px; font-size: 14px; text-align: center; padding: 10px 20px;}
+    #reload {position: absolute; left: 10px; bottom: 10px; width: auto; height: auto; background: #ffffff; z-index: 999; border: none; border-radius: 8px; text-align: center; padding: 4px 8px;}
+    #toast-container{position:fixed;bottom:20px;left:0;right:0;margin:0 auto;width:200px;text-align:center;background-color:#333;color:#fff;padding:12px 24px;border-radius:8px;font-family:sans-serif;z-index:1000;box-shadow:0 4px 12px rgba(0,0,0,0.2);opacity:0;transition:opacity .3s ease-in-out}#toast-container.show{opacity:1}
+  </style>
+  <script src="jquery.js"></script>
+  <script src="/rest/_jsapi.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!--<script src="/media/airtable.browser.js"></script>-->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div id="map">
+      <div id="info">0/0</div>
+      <button id="reload" onclick="location.reload();"><img src="media/reload.png" height="30"/></button>
+  </div>
+  
+  <!--
+  <div id="login-ui" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:2000; padding:50px; text-align:center;">
+    <h2>Zeitungsverteilung Login</h2>
+    <input type="email" id="email" placeholder="E-Mail Adresse" style="padding:10px; width:80%; max-width:300px;"><br><br>
+    <button class="btn" onclick="signIn(document.getElementById('email').value)">Link senden</button>
+  </div>
+  -->
+  
+  <script>
+    const SUPABASE_URL = 'https://irvddkoodycgemahcyxr.supabase.co'; 
+    const SUPABASE_KEY = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
+    const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    
+    const map = L.map("map").setView([47.13, 7.60], 16);
+    
+    const popup = document.getElementById('counter-popup');
+    const countDisplay = document.getElementById('count-display');
+    
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: ""
+    }).addTo(map);
+    
+    const householdInfo = $('#info');
+    let totalHouseHolds = 0;
+    const markers = new Map();
+    
+    async function toggleHouseholdSB(id, isDone, marker) {
+        showToast("Speichern...");
+        
+        const { data, error } = await _supabase
+          .from('households')
+          .update({ done: isDone })
+          .eq('id', id);
+
+        if (!error) {
+            marker.done = isDone;
+            marker.setStyle(markerStyle(marker.done));
+            showToast("Erfolgreich gespeichert!");
+            updateHouseholdInfo();
+        } else {
+            console.error(error);
+            showToast("Fehler beim Speichern!");
+        }
+    }
+
+    function markerStyle(status) {
+      return {
+        radius: 10,
+        weight: 2,
+        color: status ? "#2e7d32" : "#c62828",
+        fillColor: status ? "#2e7d32" : "#c62828",
+        fillOpacity: 0.7,
+      };
+    }
+
+    function showToast(message, duration = 3000) {
+        $('#toast-container').remove();
+        const $toast = $('<div id="toast-container"></div>').text(message).appendTo('body');
+        setTimeout(() => $toast.addClass('show'), 100);
+        setTimeout(() => {
+            $toast.removeClass('show');
+            setTimeout(() => $toast.remove(), 300);
+        }, duration);
+    }
+    
+    function updateHouseholdInfo() {
+        const doneMarkers = Array.from(markers.values()).filter(m => m.done === true);
+        householdInfo.text(doneMarkers.length + '/' + totalHouseHolds);
+    }
+    
+    
+    async function loadData() {
+        const { data: households, error } = await _supabase
+          .from('households')
+          .select('*');
+
+        if (error) {
+            console.error("Fehler beim Laden:", error);
+            householdInfo.text("Fehler beim Laden");
+            return;
+        }
+
+        totalHouseHolds = households.length;
+
+        households.forEach(record => {
+            const m = L.circleMarker(
+                [record.lat, record.lng], 
+                markerStyle(record.done)
+            ).addTo(map);
+            
+            m.done = !!record.done;
+            
+            let number = record.number ? "<b>" + record.number + " Briefkasten</b><br>" : "";
+            let description = record.description ? "<br><b>" + record.description + "</b>" : "";
+            let label = (record.STN_LABEL || "") + " " + (record.ADR_NUMBER || "");
+            
+            m.bindTooltip(number + label + description);
+            
+            m.on("click", () => toggleHouseholdSB(record.id, !m.done, m));
+            
+            markers.set(record.id, m);
+        });
+        
+        updateHouseholdInfo();
+    }
+    
+    loadData();
+    
+    
+    /**
+    
+    // 1. Prüfen, ob der User bereits eingeloggt ist
+    async function checkUser() {
+        const { data: { user } } = await _supabase.auth.getUser();
+        if (!user) {
+            document.getElementById('login-ui').style.display = 'block';
+            document.getElementById('map').style.display = 'none';
+        } else {
+            loadData();
+        }
+    }
+    
+    // 2. Login-Funktion (Magic Link)
+    async function signIn(email) {
+        const { error } = await _supabase.auth.signInWithOtp({
+            email: email,
+            options: {
+                emailRedirectTo: window.location.href,
+            }
+        });
+        if (error) alert(error.message);
+        else alert("Check deine E-Mails für den Login-Link!");
+    }
+    **/
+    
+    //checkUser();
+  </script>
+</body>
+</html>
